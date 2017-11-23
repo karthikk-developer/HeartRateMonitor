@@ -11,6 +11,7 @@
         android:layout_centerVertical="true"
         android:layout_marginStart="27dp"
         android:text="Name"
+        android:padding="10dp"
         android:textColor="@android:color/black"
         android:textSize="18dp" />
 
