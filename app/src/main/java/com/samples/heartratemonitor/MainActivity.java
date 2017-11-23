@@ -1,34 +1,28 @@
 package com.samples.heartratemonitor;
 
-import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothDevice;
-import android.bluetooth.BluetoothManager;
-import android.content.Context;
+import android.app.Service;
+import android.content.ComponentName;
 import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.os.Handler;
+import android.content.ServiceConnection;
+import android.os.IBinder;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
-import android.support.v7.widget.LinearLayoutManager;
-import android.support.v7.widget.RecyclerView;
 import android.view.View;
 import android.widget.Button;
-import android.widget.Toast;
+import android.widget.TextView;
 
-import java.util.ArrayList;
-import java.util.List;
+import org.greenrobot.eventbus.EventBus;
+import org.greenrobot.eventbus.Subscribe;
+import org.greenrobot.eventbus.ThreadMode;
 
 public class MainActivity extends AppCompatActivity {
-    private static final int REQUEST_ENABLE_BT = 1;
-    private static final long SCAN_PERIOD = 5000;
-    private List<BluetoothDevice> mDevicesList = new ArrayList<>();
-    private DevicesAdapter mAdapter;
-    private BluetoothAdapter mBluetoothAdapter;
-    private boolean mScanning;
-    private Handler mHandler;
-    private RecyclerView mRecyclerView;
-    private Button btScan;
 
+    private Button mBtConnect;
+    private BluetoothLeService mBluetoothService;
+    private boolean isBound;
+    private ServiceConnection mServiceConnection;
+    private TextView tvDeviceInfo;
+    private TextView tvHeartRate;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -38,107 +32,67 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void initialize() {
-        btScan = (Button) findViewById(R.id.bt_scan);
-        mRecyclerView = findViewById(R.id.recycler_view);
-        mAdapter = new DevicesAdapter(mDevicesList);
-        RecyclerView.LayoutManager layoutManager = new LinearLayoutManager(this);
-        mRecyclerView.setLayoutManager(layoutManager);
-        mRecyclerView.setAdapter(mAdapter);
-        mHandler = new Handler();
-
-        if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
-            Toast.makeText(this, "BluetoothLE feature not available.", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        BluetoothManager bluetoothManager = (BluetoothManager) getSystemService(Context.BLUETOOTH_SERVICE);
-        mBluetoothAdapter = bluetoothManager.getAdapter();
-        if (mBluetoothAdapter == null) {
-            Toast.makeText(this, "BluetoothLE feature not available.", Toast.LENGTH_SHORT).show();
-        }
-        btScan.setOnClickListener(new View.OnClickListener() {
+        tvDeviceInfo = findViewById(R.id.tv_device_info);
+        tvHeartRate = findViewById(R.id.tv_heart_rate);
+        mBtConnect = findViewById(R.id.bt_connect);
+        mBtConnect.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                scanDevices(true);
+                Intent i = new Intent(MainActivity.this, ScanActivity.class);
+                startActivityForResult(i, ScanActivity.SCAN_REQUEST);
             }
         });
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
-        if (!mBluetoothAdapter.isEnabled()) {
-            if (!mBluetoothAdapter.isEnabled()) {
-                Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
-                startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == ScanActivity.SCAN_REQUEST) {
+            if (resultCode == RESULT_OK) {
+                //bind to service and initiate device connection
+                String connectAddress = data.getStringExtra(ScanActivity.DEVICE_ADDRESS);
+                String deviceName = data.getStringExtra(ScanActivity.DEVICE_NAME);
+                tvDeviceInfo.setText("Name:" + deviceName + "\n" + connectAddress);
+                if (connectAddress != null && !connectAddress.isEmpty()) {
+                    Intent i = new Intent(this, BluetoothLeService.class);
+                    mServiceConnection = new ServiceConnection() {
+                        @Override
+                        public void onServiceConnected(ComponentName name, IBinder service) {
+                            mBluetoothService = ((BluetoothLeService.LocalBinder) service).getService();
+                            isBound = true;
+                        }
+
+                        @Override
+                        public void onServiceDisconnected(ComponentName name) {
+                            isBound = false;
+                        }
+                    };
+
+                    bindService(i, mServiceConnection, BIND_AUTO_CREATE);
+                }
             }
         }
-        mAdapter = new DevicesAdapter(new ArrayList<BluetoothDevice>());
-        if (mRecyclerView != null) {
-            mRecyclerView.setAdapter(mAdapter);
-        }
-        //scanDevices(true);
-    }
-
-    private void scanDevices(boolean enable) {
-        if (enable) {
-            // Stops scanning after a pre-defined scan period.
-            mHandler.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    mScanning = false;
-                    setScanBtProperties();
-                    mBluetoothAdapter.stopLeScan(mLeScanCallback);
-                }
-            }, SCAN_PERIOD);
-
-            mScanning = true;
-            mBluetoothAdapter.startLeScan(mLeScanCallback);
-        } else {
-            mScanning = false;
-            mBluetoothAdapter.stopLeScan(mLeScanCallback);
-        }
-        setScanBtProperties();
-    }
-
-    private void setScanBtProperties() {
-        if (mScanning){
-            btScan.setEnabled(false);
-            btScan.setText("Scanning");
-        }else{
-            btScan.setText("Scan");
-            btScan.setEnabled(true);
-        }
     }
 
     @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQUEST_ENABLE_BT && resultCode == RESULT_CANCELED) {
-            Toast.makeText(this, "Cannot scan for bluetooth devices without permission", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        super.onActivityResult(requestCode, resultCode, data);
+    public void onStart() {
+        super.onStart();
+        EventBus.getDefault().register(this);
     }
 
-    private BluetoothAdapter.LeScanCallback mLeScanCallback =
-            new BluetoothAdapter.LeScanCallback() {
-
-                @Override
-                public void onLeScan(final BluetoothDevice device, int rssi, byte[] scanRecord) {
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            mAdapter.addDevice(device);
-                            mAdapter.notifyDataSetChanged();
-                        }
-                    });
-                }
-            };
 
     @Override
-    protected void onPause() {
-        super.onPause();
-        scanDevices(false);
-        mAdapter.clear();
+    protected void onStop() {
+        if (isBound && mServiceConnection != null) {
+            unbindService(mServiceConnection);
+        }
+        EventBus.getDefault().unregister(this);
+        super.onStop();
     }
+
+    @Subscribe(threadMode = ThreadMode.MAIN)
+    public void onDeviceEvent(DeviceEvent event) {
+    }
+
+
 }
