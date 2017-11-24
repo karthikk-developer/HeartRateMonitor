@@ -12,4 +12,6 @@ public class DeviceEvent {
     public final static int GATT_CONNECTED = 1;
     public final static int GATT_SERVICES_DISCOVERED = 2;
     public final static int DATA_AVAILABLE = 3;
+    public final static int MESSAGE = 4;
+
 }

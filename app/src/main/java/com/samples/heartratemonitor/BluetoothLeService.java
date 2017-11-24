@@ -6,11 +6,14 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
+import android.bluetooth.BluetoothGattDescriptor;
+import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
 import android.content.Intent;
 import android.os.Binder;
 import android.os.IBinder;
+import android.os.Message;
 import android.util.Log;
 
 import org.greenrobot.eventbus.EventBus;
@@ -26,8 +29,11 @@ public class BluetoothLeService extends Service {
     private String mAddress;
     private BluetoothGatt mBluetoothGatt;
 
-    public static String HEART_RATE_MEASUREMENT = "00002a37-0000-1000-8000-00805f9b34fb";
+    public static String CLIENT_CHARACTERISTIC_CONFIG = "00002902-0000-1000-8000-00805f9b34fb";
+
+    private static String HEART_RATE_MEASUREMENT = "00002a37-0000-1000-8000-00805f9b34fb";
     private static UUID UUID_HEART_RATE_MEASUREMENT = UUID.fromString(HEART_RATE_MEASUREMENT);
+    private static String HEART_RATE_SERVICE = "0000180d-0000-1000-8000-00805f9b34fb";
 
 
     private static final int STATE_DISCONNECTED = 0;
@@ -49,6 +55,7 @@ public class BluetoothLeService extends Service {
                 // Attempts to discover services after successful connection.
                 Log.i(TAG, "Attempting to start service discovery:" +
                         mBluetoothGatt.discoverServices());
+                setUpNotificationsForHeartRate();
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 mConnectionState = STATE_DISCONNECTED;
                 event.type = DeviceEvent.GATT_DISCONNECTED;
@@ -60,11 +67,11 @@ public class BluetoothLeService extends Service {
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
             super.onServicesDiscovered(gatt, status);
-            if (status==BluetoothGatt.GATT_SUCCESS){
+            if (status == BluetoothGatt.GATT_SUCCESS) {
                 DeviceEvent event = new DeviceEvent();
                 event.type = DeviceEvent.GATT_SERVICES_DISCOVERED;
                 EventBus.getDefault().post(event);
-            }else{
+            } else {
                 Log.w(TAG, "onServicesDiscovered received: " + status);
             }
         }
@@ -84,10 +91,28 @@ public class BluetoothLeService extends Service {
         }
     };
 
-
-    public void postEvent(int eventType,BluetoothGattCharacteristic characteristic){
+    private void setUpNotificationsForHeartRate() {
+        if (mBluetoothGatt != null) {
+            BluetoothGattService service = mBluetoothGatt.getService(UUID.fromString(HEART_RATE_SERVICE));
+            if (service != null) {
+                BluetoothGattCharacteristic characteristic = service
+                        .getCharacteristic(UUID_HEART_RATE_MEASUREMENT);
+                if (characteristic != null) {
+                    setCharacteristicNotification(characteristic, true);
+                    return;
+                }
+            }
+        }
         DeviceEvent event = new DeviceEvent();
-        event.type=eventType;
+        event.type = DeviceEvent.MESSAGE;
+        event.data = "Heart rate monitor not avaialable for this device";
+        EventBus.getDefault().post(event);
+    }
+
+
+    public void postEvent(int eventType, BluetoothGattCharacteristic characteristic) {
+        DeviceEvent event = new DeviceEvent();
+        event.type = eventType;
         if (UUID_HEART_RATE_MEASUREMENT.equals(characteristic.getUuid())) {
             int flag = characteristic.getProperties();
             int format = -1;
@@ -100,15 +125,15 @@ public class BluetoothLeService extends Service {
             }
             final int heartRate = characteristic.getIntValue(format, 1);
             Log.d(TAG, String.format("Received heart rate: %d", heartRate));
-            event.data=String.valueOf(heartRate);
+            event.data = String.valueOf(heartRate);
         } else {
             // For all other profiles, writes the data formatted in HEX.
             final byte[] data = characteristic.getValue();
             if (data != null && data.length > 0) {
                 final StringBuilder stringBuilder = new StringBuilder(data.length);
-                for(byte byteChar : data)
+                for (byte byteChar : data)
                     stringBuilder.append(String.format("%02X ", byteChar));
-                event.data=new String(data) + "\n" + stringBuilder.toString();
+                event.data = new String(data) + "\n" + stringBuilder.toString();
             }
         }
         EventBus.getDefault().post(event);
@@ -193,6 +218,23 @@ public class BluetoothLeService extends Service {
         // invoked when the UI is disconnected from the Service.
         close();
         return super.onUnbind(intent);
+    }
+
+    public void setCharacteristicNotification(BluetoothGattCharacteristic characteristic,
+                                              boolean enabled) {
+        if (mBluetoothAdapter == null || mBluetoothGatt == null) {
+            Log.w(TAG, "BluetoothAdapter not initialized");
+            return;
+        }
+        mBluetoothGatt.setCharacteristicNotification(characteristic, enabled);
+
+        // This is specific to Heart Rate Measurement.
+        if (UUID_HEART_RATE_MEASUREMENT.equals(characteristic.getUuid())) {
+            BluetoothGattDescriptor descriptor = characteristic.getDescriptor(
+                    UUID.fromString(CLIENT_CHARACTERISTIC_CONFIG));
+            descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+            mBluetoothGatt.writeDescriptor(descriptor);
+        }
     }
 
 }
