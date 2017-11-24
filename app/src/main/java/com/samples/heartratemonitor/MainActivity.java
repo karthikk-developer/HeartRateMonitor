@@ -103,7 +103,11 @@ public class MainActivity extends AppCompatActivity {
     protected void onStop() {
         if (isBound && mServiceConnection != null) {
             unbindService(mServiceConnection);
+            isBound=false;
+            mServiceConnection = null;
+            mBluetoothService=null;
         }
+
         EventBus.getDefault().unregister(this);
         super.onStop();
     }
